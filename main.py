@@ -1,262 +1,230 @@
+from kivy.config import Config
+Config.set('graphics', 'multisamples', '0')
+Config.set('graphics', 'window_state', 'visible')
+
 from kivy.app import App
-from kivy.uix.boxlayout import BoxLayout
-from kivy.uix.textinput import TextInput
-from kivy.uix.button import Button
-from kivy.uix.scrollview import ScrollView
-from kivy.uix.label import Label
+from kivy.uix.widget import Widget
+from kivy.graphics import Rectangle, Color, Ellipse, Line
 from kivy.core.window import Window
 from kivy.clock import Clock
-import socket
-import threading
-import time
+from math import sqrt
 
-class ChatApp(App):
-    def build(self):
-        main_layout = BoxLayout(orientation='vertical', spacing=5, padding=10)
-        
-        # Статус подключения
-        self.status_label = Label(
-            text='Не подключено',
-            size_hint=(1, 0.05),
-            color=(1, 0, 0, 1)  # Красный цвет
-        )
-        
-        # Область сообщений
-        self.chat_scroll = ScrollView(size_hint=(1, 0.7))
-        self.chat_layout = BoxLayout(
-            orientation='vertical', 
-            size_hint_y=None,
-            spacing=5
-        )
-        self.chat_layout.bind(minimum_height=self.chat_layout.setter('height'))
-        self.chat_scroll.add_widget(self.chat_layout)
-        
-        # Панель подключения
-        connect_layout = BoxLayout(orientation='horizontal', size_hint=(1, 0.1), spacing=5)
-        
-        self.server_ip_input = TextInput(
-            hint_text='IP сервера',
-            text='192.168.1.100',  # Замените на ваш IP
-            size_hint=(0.4, 1),
-            multiline=False
-        )
-        
-        self.port_input = TextInput(
-            hint_text='Порт',
-            text='12345',
-            size_hint=(0.2, 1),
-            multiline=False
-        )
-        
-        self.nickname_input = TextInput(
-            hint_text='Имя',
-            text='User',
-            size_hint=(0.2, 1),
-            multiline=False
-        )
-        
-        self.connect_btn = Button(
-            text='Подключиться',
-            size_hint=(0.2, 1),
-            background_color=(0, 1, 0, 1)
-        )
-        self.connect_btn.bind(on_press=self.toggle_connection)
-        
-        # Панель сообщения
-        message_layout = BoxLayout(orientation='horizontal', size_hint=(1, 0.1), spacing=5)
-        
-        self.message_input = TextInput(
-            hint_text='Введите сообщение...',
-            size_hint=(0.7, 1),
-            multiline=False
-        )
-        self.message_input.bind(on_text_validate=self.send_message)
-        
-        self.send_btn = Button(
-            text='Отправить',
-            size_hint=(0.3, 1),
-            background_color=(0.2, 0.6, 1, 1)
-        )
-        self.send_btn.bind(on_press=self.send_message)
-        
-        # Сборка интерфейса
-        connect_layout.add_widget(self.server_ip_input)
-        connect_layout.add_widget(self.port_input)
-        connect_layout.add_widget(self.nickname_input)
-        connect_layout.add_widget(self.connect_btn)
-        
-        message_layout.add_widget(self.message_input)
-        message_layout.add_widget(self.send_btn)
-        
-        main_layout.add_widget(self.status_label)
-        main_layout.add_widget(self.chat_scroll)
-        main_layout.add_widget(connect_layout)
-        main_layout.add_widget(message_layout)
-        
-        # Инициализация
-        self.client_socket = None
-        self.connected = False
-        self.receive_thread = None
-        self.nickname = "User"
-        
-        self.add_message("Система", "Приложение запущено. Введите данные для подключения")
-        
-        return main_layout
-    
-    def toggle_connection(self, instance):
-        if self.connected:
-            self.disconnect()
+
+class AdaptiveJoystick(Widget):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.radius = 60
+        self.stick_size = 30
+        self.padding = 20
+        self.center_x = 0
+        self.center_y = 0
+        self.stick_pos = (0, 0)
+        self.vector = (0, 0)
+        self.active = False
+        self.visible = False
+
+        with self.canvas:
+            Color(0.2, 0.2, 0.2, 0.8)
+            self.bg_circle = Ellipse(pos=(0, 0), size=(1, 1))
+            Color(0.5, 0.5, 0.5, 1)
+            self.border = Line(width=2)
+            Color(0.8, 0.2, 0.2, 1)
+            self.stick = Ellipse(pos=(0, 0), size=(1, 1))
+
+        self.update_size()
+        Window.bind(on_resize=self.on_window_resize)
+        # Изначально скрыт
+        self.hide()
+
+    def on_window_resize(self, window, width, height):
+        self.update_size()
+
+    def update_size(self):
+        w, h = Window.width, Window.height
+        self.radius = max(40, min(80, min(w, h) * 0.08))
+        self.stick_size = self.radius * 0.45
+        self.padding = min(w, h) * 0.03
+
+        self.pos = (self.padding, self.padding)
+        self.center_x = self.pos[0] + self.radius
+        self.center_y = self.pos[1] + self.radius
+        self.size = (self.radius * 2, self.radius * 2)
+
+        if not self.active:
+            self.stick_pos = (self.center_x, self.center_y)
+        self.bg_circle.pos = (self.center_x - self.radius, self.center_y - self.radius)
+        self.bg_circle.size = (self.radius * 2, self.radius * 2)
+        self.border.circle = (self.center_x, self.center_y, self.radius)
+        self.stick.pos = (self.stick_pos[0] - self.stick_size/2,
+                          self.stick_pos[1] - self.stick_size/2)
+        self.stick.size = (self.stick_size, self.stick_size)
+
+        if self.active:
+            dx, dy = self.vector
+            new_x = self.center_x + dx * self.radius
+            new_y = self.center_y + dy * self.radius
+            self.stick_pos = (new_x, new_y)
+            self.stick.pos = (self.stick_pos[0] - self.stick_size/2,
+                              self.stick_pos[1] - self.stick_size/2)
+
+    def update_stick(self, touch_x, touch_y):
+        dx = touch_x - self.center_x
+        dy = touch_y - self.center_y
+        dist = sqrt(dx*dx + dy*dy)
+        if dist > self.radius:
+            dx = dx / dist * self.radius
+            dy = dy / dist * self.radius
+        self.stick_pos = (self.center_x + dx, self.center_y + dy)
+        self.vector = (dx / self.radius, dy / self.radius) if self.radius > 0 else (0, 0)
+        self.stick.pos = (self.stick_pos[0] - self.stick_size/2,
+                          self.stick_pos[1] - self.stick_size/2)
+
+    def reset_stick(self):
+        self.stick_pos = (self.center_x, self.center_y)
+        self.vector = (0, 0)
+        self.stick.pos = (self.stick_pos[0] - self.stick_size/2,
+                          self.stick_pos[1] - self.stick_size/2)
+        self.active = False
+
+    def on_touch_down(self, touch):
+        if not self.visible:
+            return False
+        dx = touch.x - self.center_x
+        dy = touch.y - self.center_y
+        if dx*dx + dy*dy <= self.radius*self.radius:
+            self.active = True
+            self.update_stick(touch.x, touch.y)
+            return True
+        return super().on_touch_down(touch)
+
+    def on_touch_move(self, touch):
+        if self.active and self.visible:
+            self.update_stick(touch.x, touch.y)
+            return True
+        return super().on_touch_move(touch)
+
+    def on_touch_up(self, touch):
+        if self.active and self.visible:
+            self.reset_stick()
+            return True
+        return super().on_touch_up(touch)
+
+    def show(self):
+        self.visible = True
+        self.opacity = 1
+        self.disabled = False
+
+    def hide(self):
+        self.visible = False
+        self.opacity = 0
+        self.disabled = True
+        self.reset_stick()
+
+
+class AdaptiveSquare(Widget):
+    def __init__(self, joystick, **kwargs):
+        super().__init__(**kwargs)
+        self.joystick = joystick
+        self.size = (100, 100)
+        self.pos = (0, 0)
+        with self.canvas:
+            Color(0, 0.8, 0.8, 1)
+            self.rect = Rectangle(pos=self.pos, size=self.size)
+
+        self.speed = 200
+
+        self._keyboard = Window.request_keyboard(self._keyboard_closed, self)
+        self._keyboard.bind(on_key_down=self._on_key_down)
+        Window.bind(on_resize=self.on_window_resize)
+
+    def on_window_resize(self, window, width, height):
+        self.update_size_and_position()
+
+    def update_size_and_position(self):
+        w, h = Window.width, Window.height
+        new_size = max(40, min(150, min(w, h) * 0.1))
+        self.size = (new_size, new_size)
+        self.pos = (w/2 - new_size/2, h/2 - new_size/2)
+        self.rect.pos = self.pos
+        self.rect.size = self.size
+
+    def _keyboard_closed(self):
+        self._keyboard.unbind(on_key_down=self._on_key_down)
+        self._keyboard = None
+
+    def _on_key_down(self, keyboard, keycode, text, modifiers):
+        # При нажатии любой клавиши немедленно скрываем джойстик
+        self.joystick.hide()
+
+        step = 10
+        x, y = self.pos
+        if keycode[1] == 'left':
+            x -= step
+        elif keycode[1] == 'right':
+            x += step
+        elif keycode[1] == 'up':
+            y += step
+        elif keycode[1] == 'down':
+            y -= step
         else:
-            self.connect_to_server()
-    
-    def connect_to_server(self):
-        try:
-            server_ip = self.server_ip_input.text.strip()
-            port = int(self.port_input.text.strip())
-            self.nickname = self.nickname_input.text.strip() or "User"
-            
-            self.update_status("Подключаемся...", (1, 1, 0, 1))  # Желтый
-            self.add_message("Система", f"Попытка подключения к {server_ip}:{port}...")
-            
-            # Создаем сокет
-            self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.client_socket.settimeout(10)  # Таймаут подключения 10 сек
-            
-            # Подключаемся
-            self.client_socket.connect((server_ip, port))
-            
-            # Настраиваем таймаут для операций
-            self.client_socket.settimeout(1.0)  # 1 секунда для recv
-            
-            self.connected = True
-            self.connect_btn.text = "Отключиться"
-            self.connect_btn.background_color = (1, 0, 0, 1)  # Красный
-            self.update_status("Подключено", (0, 1, 0, 1))  # Зеленый
-            
-            self.add_message("Система", "✅ Успешное подключение!")
-            
-            # Отправляем никнейм
-            try:
-                self.client_socket.send(f"NICK:{self.nickname}".encode('utf-8'))
-            except:
-                pass
-            
-            # Запускаем поток приема сообщений
-            self.receive_thread = threading.Thread(target=self.receive_messages, daemon=True)
-            self.receive_thread.start()
-            
-        except socket.timeout:
-            self.add_message("Ошибка", "❌ Таймаут подключения")
-            self.update_status("Ошибка", (1, 0, 0, 1))
-            self.cleanup_socket()
-        except ConnectionRefusedError:
-            self.add_message("Ошибка", "❌ Сервер недоступен")
-            self.update_status("Ошибка", (1, 0, 0, 1))
-            self.cleanup_socket()
-        except Exception as e:
-            self.add_message("Ошибка", f"❌ Ошибка: {str(e)}")
-            self.update_status("Ошибка", (1, 0, 0, 1))
-            self.cleanup_socket()
-    
-    def disconnect(self):
-        self.connected = False
-        self.cleanup_socket()
-        self.connect_btn.text = "Подключиться"
-        self.connect_btn.background_color = (0, 1, 0, 1)  # Зеленый
-        self.update_status("Отключено", (1, 0, 0, 1))
-        self.add_message("Система", "Отключено от сервера")
-    
-    def cleanup_socket(self):
-        if self.client_socket:
-            try:
-                self.client_socket.close()
-            except:
-                pass
-            self.client_socket = None
-    
-    def receive_messages(self):
-        buffer = ""
-        while self.connected:
-            try:
-                data = self.client_socket.recv(1024).decode('utf-8')
-                if not data:
-                    break
-                
-                buffer += data
-                while '\n' in buffer:
-                    message, buffer = buffer.split('\n', 1)
-                    if message.strip():
-                        Clock.schedule_once(lambda dt, msg=message: self.add_message("Чат", msg))
-                        
-            except socket.timeout:
-                continue  # Таймаут - нормально, продолжаем цикл
-            except Exception as e:
-                if self.connected:  # Только если еще подключены
-                    print(f"Receive error: {e}")
-                break
-        
-        if self.connected:  # Если разрыв не по нашей инициативе
-            Clock.schedule_once(lambda dt: self.connection_lost())
-    
-    def connection_lost(self):
-        self.add_message("Система", "❌ Соединение разорвано")
-        self.disconnect()
-    
-    def send_message(self, instance):
-        if not self.connected:
-            self.add_message("Ошибка", "❌ Нет подключения")
             return
-            
-        message = self.message_input.text.strip()
-        if not message:
-            return
-            
-        try:
-            # Добавляем перевод строки для сервера
-            full_message = f"{message}\n"
-            self.client_socket.send(full_message.encode('utf-8'))
-            self.add_message("Вы", message)
-            self.message_input.text = ''
-        except Exception as e:
-            self.add_message("Ошибка", f"❌ Ошибка отправки: {str(e)}")
-            self.connection_lost()
-    
-    def update_status(self, text, color):
-        self.status_label.text = f"Статус: {text}"
-        self.status_label.color = color
-    
-    def add_message(self, sender, message):
-        message_text = f"{sender}: {message}"
-        message_label = Label(
-            text=message_text,
-            size_hint_y=None,
-            height=40,
-            text_size=(Window.width - 20, None),
-            halign='left',
-            valign='middle',
-            color=(1, 1, 1, 1)
-        )
-        message_label.bind(texture_size=message_label.setter('size'))
-        
-        # Цвет фона для сообщений
-        with message_label.canvas.before:
-            from kivy.graphics import Color, Rectangle
-            if sender == "Вы":
-                Color(0.1, 0.5, 0.8, 0.8)  # Синий
-            elif sender == "Система":
-                Color(0.8, 0.5, 0.1, 0.8)  # Оранжевый
-            elif sender == "Ошибка":
-                Color(0.8, 0.1, 0.1, 0.8)  # Красный
-            else:
-                Color(0.2, 0.2, 0.2, 0.8)  # Серый
-            Rectangle(pos=message_label.pos, size=message_label.size)
-        
-        self.chat_layout.add_widget(message_label)
-        Clock.schedule_once(lambda dt: self.chat_scroll.scroll_to(message_label))
-    
-    def on_stop(self):
-        self.connected = False
-        self.cleanup_socket()
+        self.move_to(x, y)
+
+    def move_to(self, x, y):
+        w, h = Window.width, Window.height
+        x = max(0, min(x, w - self.width))
+        y = max(0, min(y, h - self.height))
+        self.pos = (x, y)
+        self.rect.pos = self.pos
+
+    def move_by_vector(self, dx, dy, dt):
+        x = self.pos[0] + dx * self.speed * dt
+        y = self.pos[1] + dy * self.speed * dt
+        self.move_to(x, y)
+
+    def on_touch_down(self, touch):
+        # При касании квадрата показываем джойстик
+        self.joystick.show()
+        # Не перехватываем событие, чтобы джойстик тоже мог его получить
+        return super().on_touch_down(touch)
+
+
+class GameWidget(Widget):
+    def __init__(self, joystick, **kwargs):
+        super().__init__(**kwargs)
+        self.joystick = joystick
+
+    def on_touch_down(self, touch):
+        # Любое касание экрана показывает джойстик
+        self.joystick.show()
+        return super().on_touch_down(touch)
+
+
+class GameApp(App):
+    def build(self):
+        root = GameWidget(None)
+
+        self.joystick = AdaptiveJoystick()
+        root.add_widget(self.joystick)
+        root.joystick = self.joystick
+
+        self.square = AdaptiveSquare(self.joystick)
+        root.add_widget(self.square)
+
+        # Принудительно скрываем джойстик при старте
+        self.joystick.hide()
+
+        Clock.schedule_once(lambda dt: self.square.update_size_and_position(), 0)
+        Clock.schedule_once(lambda dt: self.joystick.update_size(), 0)
+
+        Clock.schedule_interval(self.update_joystick_movement, 1/60)
+        return root
+
+    def update_joystick_movement(self, dt):
+        vec = self.joystick.vector
+        if vec != (0, 0):
+            self.square.move_by_vector(vec[0], vec[1], dt)
+
 
 if __name__ == '__main__':
-    ChatApp().run()
+    GameApp().run()
